@@ -41,21 +41,17 @@ build() {
   echo "slibdir=/usr/lib" >> configparms
   echo "rtlddir=/usr/lib" >> configparms
 
-  #hack - Having CPPFLAGS defined makes the build barf. Workaround it like this:
-  _cppflags=$CPPFLAGS
-  unset LD_LIBRARY_PATH CFLAGS CXXFLAGS CPPFLAGS
-  
+  unset CFLAGS CXXFLAGS
   ../glibc-$pkgver/configure \
       --prefix=/usr \
       --host=$_target \
       --libdir=/usr/lib \
-      --with-bugurl=https://bugs.archlinux.org \
-      --enable-kernel=4.4 \
+      --enable-kernel=5.10 \
       --enable-bind-now \
       --enable-stack-protector=strong \
       --enable-stackguard-randomization \
       --disable-timezone-tools \
-      --enable-multi-arch CFLAGS="$_cppflags -O2 -pipe" 
+      --enable-multi-arch --disable-werror CFLAGS="-O2 -pipe"
 
   make
 }

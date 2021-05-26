@@ -3,7 +3,7 @@
 
 pkgname=$TARGET-binutils
 pkgver=2.36.1
-pkgrel=2
+pkgrel=3
 pkgdesc='GNU Binutils for $TARGET'
 arch=('arm' 'armv6h' 'armv7h' 'aarch64' 'riscv64' 's390x' 'x86_64')
 url='https://www.gnu.org/software/binutils/'
@@ -27,14 +27,6 @@ case $TARGET in
 	*)	echo "$TARGET is not a supported target!" && exit 1;;
 esac
 
-prepare() {
-  #hack - Having CPPFLAGS defined makes the build barf. Workaround it like this:
-  _cppflags=$CPPFLAGS
-  CFLAGS="$_cppflags $CFLAGS"
-  CXXFLAGS="$CFLAGS"
-  unset CPPFLAGS
-}
-
 build() {
   cd binutils-$pkgver
 
@@ -47,6 +39,7 @@ build() {
               --enable-plugins \
               --enable-deterministic-archives \
               --enable-relro \
+	      --with-debuginfod \
               --with-pic \
               --with-system-zlib
   make
@@ -61,13 +54,6 @@ package() {
   cd binutils-$pkgver
 
   make DESTDIR="$pkgdir" install
-
-  # Replace hard links with symlinks
-  for file in $(ls "$pkgdir"/usr/$_target/bin)
-  do
-    rm "$pkgdir"/usr/$_target/bin/$file
-	 ln -sv ../../bin/$_target-$file "$pkgdir"/usr/$_target/bin/$file
-  done
 
   # Remove file conflicting with host binutils and manpages for MS Windows tools
   rm "$pkgdir"/usr/share/man/man1/$_target-{dlltool,windres,windmc}*

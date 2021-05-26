@@ -1,7 +1,7 @@
 # Maintainer: Christer Solskogen <christer.solskogen@gmail.com>
 
 pkgname=$TARGET-linux-api-headers
-pkgver=5.10.15
+pkgver=5.10.39
 pkgrel=1
 pkgdesc="Kernel headers for $TARGET"
 arch=(any)
@@ -9,7 +9,7 @@ url='https://www.kernel.org'
 license=(GPL2)
 makedepends=(rsync)
 source=(https://www.kernel.org/pub/linux/kernel/v${pkgver:0:1}.x/linux-${pkgver}.tar.{xz,sign})
-sha256sums=('d85287bcf1d51c4d0a32380ac0a5b2b487b321058a6923617f1613fbd10e6e01'
+sha256sums=('5738a515ca97853481767360c568eae46c8d777d98a69e018a3299baa6b3f614'
             'SKIP')
 validpgpkeys=(
   'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
