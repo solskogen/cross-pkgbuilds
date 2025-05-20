@@ -2,27 +2,27 @@
 # Build order: binutils -> linux-api-headers -> gcc-bootstrap -> glibc -> gcc -> glibc (again)
 
 pkgname=$TARGET-binutils
-pkgver=2.36.1
+pkgver=2.44
 pkgrel=3
 pkgdesc='GNU Binutils for $TARGET'
 arch=('arm' 'armv6h' 'armv7h' 'aarch64' 'riscv64' 's390x' 'x86_64')
 url='https://www.gnu.org/software/binutils/'
 license=(GPL)
-depends=(glibc zlib elfutils)
-makedepends=(elfutils gcc)
+depends=(glibc zlib)
+makedepends=(gcc)
 source=(https://ftp.gnu.org/gnu/binutils/binutils-$pkgver.tar.xz{,.sig})
-sha256sums=('e81d9edf373f193af428a0f256674aea62a9d74dfe93f65192d4eae030b0f3b0'
+sha256sums=('ce2017e059d63e67ddb9240e9d4ec49c2893605035cd60e92ad53177f4377237'
           'SKIP')
 validpgpkeys=('EAF1C276A747E9ED86210CBAC3126D3B4AE55E93'  # Tristan Gingold <gingold@adacore.com>
               '3A24BC1E8FB409FA9F14371813FCEF89DD9E3C4F') # Nick Clifton (Chief Binutils Maintainer) <nickc@redhat.com>
 
 case $TARGET in
-	arm)		_target=armv5tel-unknown-linux-gnueabi;;
-	armv6h)	_target=armv6l-unknown-linux-gnueabihf;;
-	armv7h)	_target=armv7l-unknown-linux-gnueabihf;;
-	aarch64) _target=aarch64-unknown-linux-gnu;;
-	riscv64) _target=riscv64-unknown-linux-gnu;;
-	s390x)	_target=s390x-unknown-linux-gnu;;
+	arm)		_target=armv5tel-cross-linux-gnueabi;;
+	armv6h)	_target=armv6l-cross-linux-gnueabihf;;
+	armv7h)	_target=armv7l-cross-linux-gnueabihf;;
+	aarch64|arm64) _target=aarch64-cross-linux-gnu;;
+	riscv64) _target=riscv64-cross-linux-gnu;;
+	s390x)	_target=s390x-cross-linux-gnu;;
 	"") echo "You must set \$TARGET to a supported target." && exit 1;;
 	*)	echo "$TARGET is not a supported target!" && exit 1;;
 esac
@@ -35,7 +35,6 @@ build() {
               --prefix=/usr \
               --disable-multilib \
               --disable-nls \
-              --enable-gold \
               --enable-plugins \
               --enable-deterministic-archives \
               --enable-relro \
@@ -47,20 +46,14 @@ build() {
 
 check() {
   cd binutils-$pkgver
-  make
+  make all-gas all-ld all-binutils
 }
 
 package() {
   cd binutils-$pkgver
 
-  make DESTDIR="$pkgdir" install
+  make DESTDIR="$pkgdir" install-gas install-ld install-binutils 
 
-  # Remove file conflicting with host binutils and manpages for MS Windows tools
-  rm "$pkgdir"/usr/share/man/man1/$_target-{dlltool,windres,windmc}*
-
-  # Remove info documents that conflict with host version
-  rm -r "$pkgdir"/usr/share/info
-
-  #Remove .so that conflict with host version
-  rm -r "$pkgdir"/usr/lib
+  # Remove files that we don't need for this package
+  rm -rf "$pkgdir"/usr/{include,lib,share}
 }
