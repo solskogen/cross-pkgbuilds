@@ -3,7 +3,37 @@
 # Contributor: Christer Solskogen <christer.solskogen@gmail.com>
 # Build order: aarch64-binutils -> aarch64-linux-api-headers -> aarch64-gcc-bootstrap -> aarch64-glibc -> aarch64-gcc -> aarch64-glibc (again)
 
-pkgname=$TARGET-gcc
+# Determine which stage we're in based on installed packages
+if ! pacman -Q "${TARGET}-glibc" &>/dev/null; then
+    pkgname="${TARGET}-gcc-bootstrap"
+    languages="c"
+    configure_options=(
+      --disable-threads
+      --without-headers
+      --with-glibc-version=2.41
+      --disable-shared
+      --with-newlib
+      --disable-libatomic
+      --disable-libgomp
+      --disable-libquadmath
+      --disable-libvtv
+    )
+fi
+
+if pacman -Qq "${TARGET}-glibc-staging" &>/dev/null; then
+    pkgname="${TARGET}-gcc-staging"
+    conflicts=("${TARGET}-gcc-bootstrap")
+    depends=(${TARGET}-glibc)
+    languages="c,c++"
+elif pacman -Qq | grep -qx "${TARGET}-glibc" || pacman -Qq | grep -qx "${TARGET}-gcc"; then
+    pkgname="${TARGET}-gcc"
+    conflicts=("${TARGET}-gcc-bootstrap" "${TARGET}-gcc-staging")
+    depends=(${TARGET}-glibc)
+    languages="ada,c,c++,d"
+fi
+
+echo tiss
+exit 1
 pkgver=15.1.1+r7+gf36ec88aa85a
 _commit=f36ec88aa85a1a8f4ec300dfcd862fc4fbca1c53
 pkgrel=1
@@ -11,11 +41,10 @@ pkgdesc='The GNU Compiler Collection - cross compiler for ARM64 target'
 arch=('arm' 'armv6h' 'armv7h' 'aarch64' 'riscv64' 's390x' 'x86_64')
 url='https://gcc.gnu.org/'
 license=(GPL LGPL FDL)
-depends=(libmpc zstd libisl)
-makedepends=(binutils $TARGET-binutils)
+depends=(gmp mpfr libmpc zstd libisl)
+makedepends+=(binutils $TARGET-binutils)
 provides=($TARGET-gcc)
-conflicts=($TARGET-gcc-bootstrap)
-options=(!emptydirs !strip staticlibs)
+options=(!emptydirs !strip staticlibs '!lto')
 source=(git+https://sourceware.org/git/gcc.git#commit=${_commit})
 
 validpgpkeys=(F3691687D867B81B51CE07D9BBE43771487328A9  # bpiotrowski@archlinux.org
@@ -32,19 +61,24 @@ pkgver() {
 case $TARGET in
 	arm)    
 		_target=armv5tel-cross-linux-gnueabi
-		configure_options=(--with-arch=armv5te --with-float=soft);;
+		configure_options+=(--with-arch=armv5te --with-float=soft);;
 	armv6h)
 		_target=armv6l-cross-linux-gnueabihf
-		configure_options=(--with-arch=armv6 --with-float=hard --with-fpu=vfp);;
+		configure_options+=(--with-arch=armv6 --with-float=hard --with-fpu=vfp);;
 	armv7h)
 		_target=armv7l-cross-linux-gnueabihf
-		configure_options=(--with-arch=armv7-a --with-float=hard --with-fpu=vfpv3-d16);;
+		configure_options+=(--with-arch=armv7-a --with-float=hard --with-fpu=vfpv3-d16);;
 	aarch64)
 		_target=aarch64-cross-linux-gnu
-		configure_options=(
+		configure_options+=(
 			--with-arch=armv8-a
 			--enable-fix-cortex-a53-835769
 			--enable-fix-cortex-a53-843419)
+       		export CFLAGS_FOR_TARGET="-march=armv8-a -O2 -pipe -fno-plt -fexceptions \
+		-Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security \
+		-fstack-clash-protection \
+		-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+		export CXXFLAGS_FOR_TARGET="$CFLAGS_FOR_TARGET -Wp,-D_GLIBCXX_ASSERTIONS"
 		;;
 	riscv64)
 		_target=riscv64-cross-linux-gnu
@@ -57,37 +91,60 @@ case $TARGET in
 esac
 
 build() {
-  rm -rf "$srcdir"/gcc-build
-  mkdir -p "$srcdir"/gcc-build
+  export GDCFLAGS="-O2 -pipe"
+  mkdir "$srcdir"/gcc-build
   cd "$srcdir"/gcc-build
   CFLAGS=${CFLAGS/-Werror=format-security/}
   CXXFLAGS=${CXXFLAGS/-Werror=format-security/}
 
   "$srcdir"/gcc/configure \
       --prefix=/usr \
-      --with-sysroot=/usr/$_target/sys-root \
+      --libdir=/usr/lib \
       --libexecdir=/usr/lib \
-      --target=$_target \
-      --disable-nls --enable-default-pie \
-      --enable-languages=c,c++ \
-      --with-system-zlib --enable-__cxa_atexit \
-      --enable-linker-build-id \
-      --enable-plugin \
-      --with-linker-hash-style=gnu --enable-gnu-indirect-function \
-      --disable-werror \
+      --mandir=/usr/share/man \
+      --infodir=/usr/share/info \
+      --with-linker-hash-style=gnu \
+      --with-system-zlib \
+      --enable-__cxa_atexit \
+      --enable-cet=auto \
       --enable-checking=release \
+      --enable-clocale=gnu \
+      --enable-default-pie \
+      --enable-default-ssp \
+      --enable-gnu-indirect-function \
+      --enable-gnu-unique-object \
+      --enable-libstdcxx-backtrace \
+      --enable-link-serialization=1 \
+      --enable-linker-build-id \
+      --enable-lto \
+      --enable-multilib \
+      --enable-plugin \
+      --disable-libssp \
+      --disable-libstdcxx-pch \
+      --disable-werror \
+      --with-sysroot=/usr/$_target/sys-root \
+      --target=$_target \
+      --disable-nls \
+      --enable-languages="$languages" \
+      --disable-libcc1 \
       "${configure_options[@]}"
 
   make
 }
 
 package() {
-  cd gcc-build
+  mkdir -p "$pkgdir"/usr/lib "$pkgdir"/usr/${_target}/lib
+  ln -s lib "$pkgdir"/usr/lib64
+  ln -s lib "$pkgdir"/usr/${_target}/lib64
 
+
+  cd gcc-build
   make install-strip DESTDIR="$pkgdir"
   ln -s $_target-gcc "$pkgdir"/usr/bin/$_target-cc
   # Remove files that conflict with host gcc package
   rm -rf "$pkgdir"/usr/{include,share}
-  rm -rf "$pkgdir"/usr/lib/libcc1.*
+
+  rm -f "$pkgdir"/usr/lib64
+  rm -f "$pkgdir"/usr/${_target}/lib64
 
 }

@@ -1,0 +1,152 @@
+# Maintainer: Giancarlo Razzolini <grazzolini@archlinux.org>
+# Maintainer: Frederik Schwan <freswa at archlinux dot org>
+# Contributor: Bartłomiej Piotrowski <bpiotrowski@archlinux.org>
+# Contributor: Allan McRae <allan@archlinux.org>
+
+# toolchain build order: linux-api-headers->glibc->binutils->gcc->glibc->binutils->gcc
+# NOTE: valgrind requires rebuilt with each major glibc version
+
+CARCH=${TARGET}
+pkgname=(glibc-crossed)
+replaces=('glibc')
+conflicts=('glibc')
+provides=('glibc')
+
+pkgver=2.41+r48+g5cb575ca9a3d
+_commit=5cb575ca9a3da045bc3e2f0dda81ad5804bde1e6
+pkgrel=1
+arch=('x86_64' 'aarch64')
+url='https://www.gnu.org/software/libc'
+license=(GPL-2.0-or-later LGPL-2.1-or-later)
+makedepends=(git gd python)
+options=(staticlibs !lto !strip)
+source=("git+https://sourceware.org/git/glibc.git#commit=${_commit}"
+        locale.gen.txt
+        locale-gen
+)
+b2sums=('02359e60590156f471d82bb97eb9e076a53edf460ce04a455adc5dd1746b25cb4e641aa6b9d43f642ca57018331aee1ad49feed89bcf23f5defc7b1852c1ad61'
+        'c859bf2dfd361754c9e3bbd89f10de31f8e81fd95dc67b77d10cb44e23834b096ba3caa65fbc1bd655a8696c6450dfd5a096c476b3abf5c7e125123f97ae1a72'
+        '04fbb3b0b28705f41ccc6c15ed5532faf0105370f22133a2b49867e790df0491f5a1255220ff6ebab91a462f088d0cf299491b3eb8ea53534cb8638a213e46e3')
+
+validpgpkeys=(7273542B39962DF7B299931416792B4EA25340F8 # Carlos O'Donell
+              BC7C7372637EC10C57D7AA6579C43DFBF1CF2187) # Siddhesh Poyarekar
+
+pkgver() {
+  cd glibc
+  git describe --abbrev=12 --tags | sed 's/[^-]*-//;s/[^-]*-/&r/;s/-/+/g'
+}
+case $TARGET in
+        arm)
+                _target=armv5tel-cross-linux-gnueabi
+		;;
+        armv6h)
+                _target=armv6l-cross-linux-gnueabihf
+		;;
+        armv7h)
+                _target=armv7l-cross-linux-gnueabihf
+		;;
+        aarch64)
+                _target=aarch64-cross-linux-gnu
+                export CFLAGS="-march=armv8-a -O2 -pipe -fstack-protector-strong -fexceptions \
+		        -Wformat -Werror=format-security \
+        		-fstack-clash-protection \
+        		-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+
+                configure_options=(--enable-memory-tagging)
+                ;;
+        riscv64)
+                _target=riscv64-cross-linux-gnu
+                configure_options=();;
+        s390x)
+                _target=s390x-cross-linux-gnu
+                configure_options=(--with-arch=z13);;
+        "") echo "You must set \$TARGET to a supported target." && exit 1;;
+        *) echo "$TARGET is not a supported target!" && exit 1;;
+esac
+
+prepare() {
+  mkdir -p glibc-build
+
+  [[ -d glibc-$pkgver ]] && ln -s glibc-$pkgver glibc
+  cd glibc
+}
+
+build() {
+  local _configure_flags=(
+      --prefix=/usr
+      --enable-bind-now
+      --enable-fortify-source
+      --enable-kernel=4.4
+      --enable-multi-arch
+      --enable-stack-protector=strong
+      --disable-nscd
+      --disable-profile
+      --disable-werror
+      --host=${_target}
+      --build=$($srcdir/glibc/scripts/config.guess)
+     "${_configure_flags[@]}"
+  )
+
+  unset CC CXX 
+
+  (
+    cd glibc-build
+
+    echo "slibdir=/usr/lib" >> configparms
+    echo "rtlddir=/usr/lib" >> configparms
+    echo "sbindir=/usr/bin" >> configparms
+    echo "rootsbindir=/usr/bin" >> configparms
+
+    "${srcdir}"/glibc/configure \
+        --libdir=/usr/lib \
+        --libexecdir=/usr/lib \
+        --enable-cet \
+        "${_configure_flags[@]}"
+
+    make -O
+
+    # build info pages manually for reproducibility
+    make info
+  )
+
+}
+
+package() {
+  pkgdesc='GNU C Library'
+  depends=('linux-api-headers>=4.10' tzdata filesystem)
+  optdepends=('gd: for memusagestat'
+              'perl: for mtrace')
+  install=glibc.install
+  backup=(etc/gai.conf
+          etc/locale.gen)
+
+  make -C glibc-build DESTDIR="${pkgdir}" install
+  rm -f "${pkgdir}"/etc/ld.so.cache
+
+  # Shipped in tzdata
+  rm -f "${pkgdir}"/usr/bin/{tzselect,zdump,zic}
+
+  cd glibc
+
+  install -dm755 "${pkgdir}"/usr/lib/locale
+
+  install -m644 posix/gai.conf "${pkgdir}"/etc/gai.conf
+
+  install -m755 "${srcdir}"/locale-gen "${pkgdir}"/usr/bin
+
+  # Create /etc/locale.gen
+  install -m644 "${srcdir}"/locale.gen.txt "${pkgdir}"/etc/locale.gen
+  sed -e '1,3d' -e 's|/| |g' -e 's|\\| |g' -e 's|^|#|g' \
+    localedata/SUPPORTED >> "${pkgdir}"/etc/locale.gen
+
+  # Add SUPPORTED file to pkg
+  sed -e '1,3d' -e 's|/| |g' -e 's| \\||g' \
+    localedata/SUPPORTED > "${pkgdir}"/usr/share/i18n/SUPPORTED
+
+  # install C.UTF-8 so that it is always available
+  # should be built into glibc eventually
+  # https://sourceware.org/glibc/wiki/Proposals/C.UTF-8
+  # https://bugs.archlinux.org/task/74864
+  install -dm755 "${pkgdir}"/usr/lib/locale
+  sed -i '/#C\.UTF-8 /d' "${pkgdir}"/etc/locale.gen
+}

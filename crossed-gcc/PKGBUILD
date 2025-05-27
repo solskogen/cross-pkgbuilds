@@ -1,0 +1,154 @@
+# Maintainer: Christer Solskogen <christer.solskogen@gmail.com>
+
+CARCH=${TARGET}
+pkgname=gcc-crossed
+pkgver=15.1.1+r7+gf36ec88aa85a
+_commit=f36ec88aa85a1a8f4ec300dfcd862fc4fbca1c53
+pkgrel=1
+pkgdesc='The GNU Compiler Collection - cross compiler for ARM64 target'
+arch=('arm' 'armv6h' 'armv7h' 'aarch64' 'riscv64' 's390x' 'x86_64')
+url='https://gcc.gnu.org/'
+license=(GPL LGPL FDL)
+depends=(libmpc zstd libisl)
+makedepends=(binutils $TARGET-binutils)
+provides=('gcc' 'gcc-libs')
+replaces=('gcc' 'gcc-libs')
+conflicts=('gcc' 'gcc-libs')
+options=(!emptydirs !strip staticlibs)
+_gmp=gmp-6.3.0
+_mpfr=mpfr-4.2.2
+_mpc=mpc-1.3.1
+_isl=isl-0.27
+source=(git+https://sourceware.org/git/gcc.git#commit=${_commit}
+	https://gmplib.org/download/gmp/$_gmp.tar.lz
+        https://ftp.gnu.org/gnu/mpfr/$_mpfr.tar.xz
+        https://ftp.gnu.org/gnu/mpc/$_mpc.tar.gz
+        https://libisl.sourceforge.io/$_isl.tar.gz)
+
+sha256sums=('7dc521dbaf5e8db83574db217c5fdb8c4fed6ec1cc6ce9f0095755f599890b8c'
+            'be5c908a7a836c3a9bd9d62aa58563c5e9e7fef94c43a7f42dbc35bb6d02733c'
+            'b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01'
+            'ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8'
+            '7a1a3f04d57c7c72fee5a6148cd3b02b05db6a6dd9a58def7bdc00972a6301c3')
+
+options=('!buildflags' '!strip' '!lto')
+pkgver() {
+  cd gcc
+  echo "$(cat gcc/BASE-VER)+$(git describe --abbrev=12 --tags | sed 's/[^-]*-[^-]*-//;s/[^-]*-/r&/;s/-/+/g;s/_/./')"
+}
+
+prepare() {
+
+	cd "$srcdir"/gcc
+	# Do not run fixincludes
+	sed -i 's@\./fixinc\.sh@-c true@' gcc/Makefile.in
+
+	# Arch Linux installs libraries /lib
+	sed -i '/m64=/s/lib64/lib/' gcc/config/i386/t-linux64
+	sed -i '/lp64=/s/lib64/lib/' gcc/config/aarch64/t-aarch64-linux
+
+	ln -sf ${srcdir}/$_gmp gmp
+	ln -sf ${srcdir}/$_mpfr mpfr 
+	ln -sf ${srcdir}/$_mpc mpc 
+	ln -sf ${srcdir}/$_isl isl
+}
+case $TARGET in
+	arm)    
+		_target=armv5tel-cross-linux-gnueabi
+		configure_options=(--with-arch=armv5te --with-float=soft);;
+	armv6h)
+		_target=armv6l-cross-linux-gnueabihf
+		configure_options=(--with-arch=armv6 --with-float=hard --with-fpu=vfp);;
+	armv7h)
+		_target=armv7l-cross-linux-gnueabihf
+		configure_options=(--with-arch=armv7-a --with-float=hard --with-fpu=vfpv3-d16);;
+	aarch64)
+		_target=aarch64-cross-linux-gnu
+		configure_options=(
+			--with-arch=armv8-a
+			--enable-fix-cortex-a53-835769
+			--enable-fix-cortex-a53-843419)
+		export CFLAGS="-march=armv8-a -O2 -pipe -fstack-protector-strong -fno-plt -fexceptions \
+			-Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security \
+			-fstack-clash-protection \
+			-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+		export CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+		;;
+	riscv64)
+		_target=riscv64-cross-linux-gnu
+		configure_options=();;
+	s390x)
+		_target=s390x-cross-linux-gnu
+		configure_options=(--with-arch=z13);;
+	"") echo "You must set \$TARGET to a supported target." && exit 1;;
+	*) echo "$TARGET is not a supported target!" && exit 1;;
+esac
+
+
+_libdir=usr/lib/gcc/$_target/${pkgver%%+*}
+
+build() {
+  rm -rf "$srcdir"/gcc-build
+  mkdir -p "$srcdir"/gcc-build
+  cd "$srcdir"/gcc-build
+  CFLAGS=${CFLAGS/-Werror=format-security/}
+  CXXFLAGS=${CXXFLAGS/-Werror=format-security/}
+
+  "$srcdir"/gcc/configure \
+      --prefix=/usr \
+      --libdir=/usr/lib \
+      --libexecdir=/usr/lib \
+      --mandir=/usr/share/man \
+      --infodir=/usr/share/info \
+      --with-linker-hash-style=gnu \
+      --enable-__cxa_atexit \
+      --enable-cet=auto \
+      --enable-checking=release \
+      --enable-clocale=gnu \
+      --enable-default-pie \
+      --enable-default-ssp \
+      --enable-gnu-indirect-function \
+      --enable-gnu-unique-object \
+      --enable-libstdcxx-backtrace \
+      --enable-link-serialization=1 \
+      --enable-linker-build-id \
+      --enable-lto \
+      --enable-multilib \
+      --enable-plugin \
+      --enable-shared \
+      --enable-threads=posix \
+      --disable-libssp \
+      --disable-libstdcxx-pch \
+      --disable-werror \
+      --target=$_target \
+      --host=$_target \
+      --build=$CHOST \
+      --disable-nls \
+      --enable-languages=ada,c,c++,d \
+      --disable-fixincludes \
+      "${configure_options[@]}"
+
+  make -O gcc_cv_objdump=${_target}-objdump
+}
+
+package() {
+options=(staticlibs)
+  cd gcc-build
+  mkdir -p "$pkgdir"/usr/lib
+  ln -s lib "$pkgdir"/usr/lib64
+
+  make install-strip DESTDIR="$pkgdir"
+  make -C $_target/libphobos DESTDIR="$pkgdir" install
+  ln -s gcc "$pkgdir"/usr/bin/cc  
+
+  # insist on dynamic linking, but keep static libraries because gnatmake complains
+  mv "$pkgdir"/${_libdir}/adalib/libgna{rl,t}-${pkgver%%.*}.so "$pkgdir/usr/lib"
+  ln -s libgnarl-${pkgver%%.*}.so "$pkgdir/usr/lib/libgnarl.so"
+  ln -s libgnat-${pkgver%%.*}.so "$pkgdir/usr/lib/libgnat.so"
+  rm -f "$pkgdir"/${_libdir}/adalib/libgna{rl,t}.so
+
+  #TODO: Figure out why this is needed, because they differ
+  cp /usr/lib/gcc/${_target}/*/include/limits.h "$pkgdir"/usr/lib/gcc/${_target}/*/include/limits.h
+
+  rm -f "$pkgdir"/usr/lib64
+}
