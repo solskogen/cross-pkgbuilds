@@ -1,20 +1,24 @@
 # Maintainer: Christer Solskogen <christer.solskogen@gmail.com>
-# Build order: binutils -> linux-api-headers -> gcc-bootstrap -> glibc -> gcc -> glibc (again)
 
 pkgname=$TARGET-binutils
-pkgver=2.44
-pkgrel=3
-pkgdesc='GNU Binutils for $TARGET'
+pkgver=2.44+r94+gfe459e33c676
+_commit=fe459e33c676883b5f28cc96c00e242973d906a9
+pkgrel=1
+pkgdesc="A set of programs to assemble and manipulate binary and object files - cross for ${TARGET}"
 arch=('arm' 'armv6h' 'armv7h' 'aarch64' 'riscv64' 's390x' 'x86_64')
 url='https://www.gnu.org/software/binutils/'
-license=(GPL)
-depends=(glibc zlib)
-makedepends=(gcc)
-source=(https://ftp.gnu.org/gnu/binutils/binutils-$pkgver.tar.xz{,.sig})
-sha256sums=('ce2017e059d63e67ddb9240e9d4ec49c2893605035cd60e92ad53177f4377237'
-          'SKIP')
-validpgpkeys=('EAF1C276A747E9ED86210CBAC3126D3B4AE55E93'  # Tristan Gingold <gingold@adacore.com>
-              '3A24BC1E8FB409FA9F14371813FCEF89DD9E3C4F') # Nick Clifton (Chief Binutils Maintainer) <nickc@redhat.com>
+license=(GPL-2.0-or-later GPL-3.0-or-later LGPL-2.0-or-later LGPL-3.0-or-later GFDL-1.3 FSFAP)
+depends=(glibc jansson libelf zlib zstd)
+makedepends=(git)
+options=(staticlibs)
+source=(git+https://sourceware.org/git/binutils-gdb.git#commit=${_commit})
+sha256sums=('07a821f494fbb61dcf9e958f6f840eaa4a45c748c59415fd3ea1ec4b3326673c')
+validpgpkeys=(3A24BC1E8FB409FA9F14371813FCEF89DD9E3C4F)
+
+pkgver() {
+  cd binutils-gdb
+  git describe --abbrev=12 --tags | sed 's/[^-]*-//;s/[^-]*-/&r/;s/-/+/g;s/_/./'
+}
 
 case $TARGET in
 	arm)		_target=armv5tel-cross-linux-gnueabi;;
@@ -26,31 +30,46 @@ case $TARGET in
 	"") echo "You must set \$TARGET to a supported target." && exit 1;;
 	*)	echo "$TARGET is not a supported target!" && exit 1;;
 esac
+prepare() {
+  mkdir -p binutils-build
+  cd binutils-gdb
 
-build() {
-  cd binutils-$pkgver
+  # Turn off development mode (-Werror, gas run-time checks, date in sonames)
+  sed -i '/^development=/s/true/false/' bfd/development.sh
 
-  ./configure --target=$_target \
-              --with-sysroot=/usr/$_target/sys-root \
-              --prefix=/usr \
-              --disable-multilib \
-              --disable-nls \
-              --enable-plugins \
-              --enable-deterministic-archives \
-              --enable-relro \
-	      --with-debuginfod \
-              --with-pic \
-              --with-system-zlib
-  make
 }
 
-check() {
-  cd binutils-$pkgver
+
+build() {
+  cd binutils-build
+  "${srcdir}"/binutils-gdb/configure \
+    --prefix=/usr \
+    --sysconfdir="${pkgdir}"/etc \
+    --with-lib-path=/usr/lib:/usr/local/lib \
+    --enable-cet \
+    --enable-colored-disassembly \
+    --enable-default-execstack=no \
+    --enable-deterministic-archives \
+    --enable-jansson \
+    --enable-ld=default \
+    --enable-new-dtags \
+    --enable-plugins \
+    --enable-relro \
+    --enable-threads \
+    --disable-werror \
+    --with-debuginfod \
+    --with-pic \
+    --with-system-zlib \
+    --target=$_target \
+    --with-sysroot=/usr/$_target/sys-root \
+    --disable-multilib \
+    --disable-nls
+  
   make all-gas all-ld all-binutils
 }
 
 package() {
-  cd binutils-$pkgver
+  cd binutils-build
 
   make DESTDIR="$pkgdir" install-gas install-ld install-binutils 
 
