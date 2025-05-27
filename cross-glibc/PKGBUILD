@@ -1,72 +1,95 @@
 # Maintainer: Christer Solskogen <christer.solskogen@gmail.com>
-# Build order: aarch64-binutils -> aarch64-linux-api-headers -> aarch64-gcc-bootstrap -> aarch64-glibc -> aarch64-gcc -> aarch64-glibc (again)
 
-pkgname=$TARGET-glibc
+if !pacman -Q "${TARGET}-gcc" &>/dev/null; then
+	echo "You need at least ${TARGET}-gcc-bootstrap installed!"
+	exit 1
+fi
+
+if pacman -Q "${TARGET}-gcc-bootstrap" &>/dev/null; then
+	pkgname=${TARGET}-glibc-staging
+	conflicts=(${TARGET}-glibc)
+else
+	pkgname=${TARGET}-glibc
+	conflicts=(${TARGET}-glibc-staging)
+fi
+
 pkgver=2.41+r48+g5cb575ca9a3d
 _commit=5cb575ca9a3da045bc3e2f0dda81ad5804bde1e6
 pkgrel=1
 pkgdesc='GNU C Library - compiled for $TARGET'
+provides=(${TARGET}-glibc)
 arch=('arm' 'armv6h' 'armv7h' 'aarch64' 'riscv64' 's390x' 'x86_64')
 url='https://www.gnu.org/software/libc/'
 license=('GPL' 'LGPL')
-makedepends=($TARGET-gcc $TARGET-linux-api-headers)
-options=(!strip staticlibs)
+
+makedepends=($TARGET-gcc $TARGET-linux-api-headers python)
+options=(!buildflags !strip staticlibs)
 source=("git+https://sourceware.org/git/glibc.git#commit=${_commit}")
 sha256sums=('ba3708d5452115c252fcb60e97f400770aedd8a9f6b2e499b8d29140643241f9')
 
 validpgpkeys=(7273542B39962DF7B299931416792B4EA25340F8  # "Carlos O'Donell <carlos@systemhalted.org>"
               BC7C7372637EC10C57D7AA6579C43DFBF1CF2187) # Siddhesh Poyarekar
 
+pkgver() {
+  cd glibc
+  git describe --abbrev=12 --tags | sed 's/[^-]*-//;s/[^-]*-/&r/;s/-/+/g'
+}
+
 case $TARGET in
    arm)     _target=armv5tel-cross-linux-gnueabi;;
    armv6h)  _target=armv6l-cross-linux-gnueabihf;;
    armv7h)  _target=armv7l-cross-linux-gnueabihf;;
-   aarch64) _target=aarch64-cross-linux-gnu;;
+   aarch64) _target=aarch64-cross-linux-gnu
+            CFLAGS="-march=armv8-a -O2 -pipe -fno-plt -fexceptions \
+            -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security \
+            -fstack-clash-protection \
+            -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
+            export CFLAGS=${CFLAGS/-fno-plt/}
+            export CXXFLAGS="$CFLAGS -Wp,-D_GLIBCXX_ASSERTIONS"
+            _configure_flags+=(--enable-memory-tagging);;
    riscv64) _target=riscv64-cross-linux-gnu;;
    s390x)   _target=s390x-cross-linux-gnu;;
    "") echo "You must set \$TARGET to a supported target." && exit 1;;
    *) echo "$TARGET is not a supported target!" && exit 1;;
 esac
 
-pkgver() {
-  cd glibc
-  git describe --abbrev=12 --tags | sed 's/[^-]*-//;s/[^-]*-/&r/;s/-/+/g'
-}
-
 build() {
+  CFLAGS=${CFLAGS/-Wp,-D_FORTIFY_SOURCE=3/}
+
   mkdir -p glibc-build
   cd glibc-build
   echo "build-programs=no" > configparms
-  echo "cross-compiling=yes" >> configparms
   echo "slibdir=/usr/lib" >> configparms
   echo "rtlddir=/usr/lib" >> configparms
 
-  unset CC CXX CFLAGS CXXFLAGS
   ../glibc/configure \
-      --prefix=/usr \
-      --host=$_target \
+  --prefix=/usr \
       --libdir=/usr/lib \
-      --enable-kernel=5.4 \
+      --libexecdir=/usr/lib \
+      --enable-cet \
       --enable-bind-now \
+      --enable-fortify-source \
+      --enable-kernel=4.4 \
+      --enable-multi-arch \
       --enable-stack-protector=strong \
-      --enable-stackguard-randomization \
-      --disable-timezone-tools \
-      --enable-multi-arch --disable-werror CFLAGS="-O2 -pipe"
+      --disable-nscd \
+      --disable-profile \
+      --disable-werror \
+      --host=$_target \
+      "${_configure_flags[@]}"
 
   make
 }
 
 package() {
   cd glibc-build
-  make DESTDIR="$pkgdir"/usr/$_target/sys-root install 
+  make DESTDIR="$pkgdir"/usr/$_target/sys-root install -j4
 
   #Remove files we don't need in a cross compilation environment 
-  rm -r "$pkgdir"/usr/$_target/sys-root/{etc,usr/share,var}
+  rm -rf "$pkgdir"/usr/$_target/sys-root/{bin,etc,usr/{bin,sbin,share},sbin,var}
 
   #strip manually
-  find "$pkgdir"/usr/$_target/sys-root  -name '*.a' | xargs -0 $_target-strip --strip-debug || true 
-  find "$pkgdir"/usr/$_target/sys-root -name '*.so' -and ! -name 'libc.so' -print0 | xargs -0 $_target-strip --strip-all || true
+  find "$pkgdir"/usr/$_target/sys-root  -name '*.a' -print0 | xargs -0 $_target-strip --strip-debug || true 
+  find "$pkgdir"/usr/$_target/sys-root -name '*.so*' -print0 | xargs -0 $_target-strip --strip-all || true
 
-  #workaround for fakeroot bug
-  chown -R root:root "$pkgdir"/usr
 }

@@ -1,7 +1,4 @@
-# Maintainer: Anatol Pomozov <anatol.pomozov@gmail.com>
-# Maintainer: Eli Schwartz <eschwartz@archlinux.org>
-# Contributor: Christer Solskogen <christer.solskogen@gmail.com>
-# Build order: aarch64-binutils -> aarch64-linux-api-headers -> aarch64-gcc-bootstrap -> aarch64-glibc -> aarch64-gcc -> aarch64-glibc (again)
+# Maintainer: Christer Solskogen <christer.solskogen@gmail.com>
 
 # Determine which stage we're in based on installed packages
 if ! pacman -Q "${TARGET}-glibc" &>/dev/null; then
@@ -32,8 +29,6 @@ elif pacman -Qq | grep -qx "${TARGET}-glibc" || pacman -Qq | grep -qx "${TARGET}
     languages="ada,c,c++,d"
 fi
 
-echo tiss
-exit 1
 pkgver=15.1.1+r7+gf36ec88aa85a
 _commit=f36ec88aa85a1a8f4ec300dfcd862fc4fbca1c53
 pkgrel=1
@@ -90,6 +85,12 @@ case $TARGET in
 	*) echo "$TARGET is not a supported target!" && exit 1;;
 esac
 
+prepare() {
+  cd gcc
+  sed -i '/m64=/s/lib64/lib/' gcc/config/i386/t-linux64
+  sed -i '/lp64=/s/lib64/lib/' gcc/config/aarch64/t-aarch64-linux
+}
+
 build() {
   export GDCFLAGS="-O2 -pipe"
   mkdir "$srcdir"/gcc-build
@@ -127,15 +128,16 @@ build() {
       --disable-nls \
       --enable-languages="$languages" \
       --disable-libcc1 \
+      --disable-fixincludes \
       "${configure_options[@]}"
 
   make
 }
 
 package() {
-  mkdir -p "$pkgdir"/usr/lib "$pkgdir"/usr/${_target}/lib
-  ln -s lib "$pkgdir"/usr/lib64
-  ln -s lib "$pkgdir"/usr/${_target}/lib64
+#  mkdir -p "$pkgdir"/usr/lib "$pkgdir"/usr/${_target}/lib
+#  ln -s lib "$pkgdir"/usr/lib64
+#  ln -s lib "$pkgdir"/usr/${_target}/lib64
 
 
   cd gcc-build
@@ -144,7 +146,6 @@ package() {
   # Remove files that conflict with host gcc package
   rm -rf "$pkgdir"/usr/{include,share}
 
-  rm -f "$pkgdir"/usr/lib64
-  rm -f "$pkgdir"/usr/${_target}/lib64
+#  rm -f "$pkgdir"/usr/lib64 "$pkgdir"/usr/${_target}/lib64
 
 }
